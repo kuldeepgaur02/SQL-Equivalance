@@ -1,0 +1,25 @@
+{
+  "name": "shop",
+  "schema_file": "shop/schema.sql",
+  "meta": {"suite": "shop"},
+  "pairs": [
+    {
+      "name": "shop:gt_vs_gte",
+      "q1": "SELECT id FROM orders WHERE amount > 100",
+      "q2": "SELECT id FROM orders WHERE amount >= 100",
+      "meta": {"expected": "different"}
+    },
+    {
+      "name": "shop:count_star_vs_count_col",
+      "q1": "SELECT count(*) FROM users",
+      "q2": "SELECT count(age) FROM users",
+      "meta": {"expected": "different"}
+    },
+    {
+      "name": "shop:same_text",
+      "q1": "select id from orders -- comment",
+      "q2": "SELECT  id\nFROM orders;",
+      "meta": {"expected": "equivalent"}
+    }
+  ]
+}

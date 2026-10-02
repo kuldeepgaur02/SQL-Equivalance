@@ -1,0 +1,29 @@
+[project]
+name = "cexgen"
+version = "0.1.0"
+description = "Find data on which two SQL queries return different results"
+requires-python = ">=3.10"
+dependencies = [
+    "psycopg2-binary>=2.9",
+    "sqlglot>=30,<31",
+    "anthropic>=1.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+cexgen = "cexgen.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--import-mode=importlib"   # same test file name may appear in several folders
+markers = ["db: needs a running Postgres (docker compose up -d)"]
