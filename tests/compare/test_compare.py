@@ -116,6 +116,7 @@ def test_same_values_in_another_column_order():
     q2 = run("Q2", [[1, 10, "a"], [2, 20, "b"]], (INT, INT, TEXT))
     c = compare(q1, q2)
     assert (c.outcome, c.kind) == (DIFFER, COLUMNS) and "Q1 column 2 is Q2 column 3" in c.reason
+    assert not c.counterexample                                      # not counted as a counterexample
     # same column bags but rows pair up differently: a real difference, not a column swap
     q3 = run("Q2", [[1, 20, "a"], [2, 10, "b"]], (INT, INT, TEXT))
     assert compare(q1, q3).kind == ROWS

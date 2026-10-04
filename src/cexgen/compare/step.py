@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from .compare import compare
 from .execute import run_pair
-from .model import DIFFER, Comparison
+from .model import COLUMNS, DIFFER, Comparison
 from .normalize import display
 from .ordering import nondeterminism
 
@@ -39,7 +39,7 @@ def comparison_detail(result: Comparison) -> dict:
     )
     if result.reference:
         detail["veriEQL_verdict"] = result.reference.get("verdict")
-        detail["agrees_with_veriEQL"] = agreement(result.outcome, result.reference.get("verdict"))
+        detail["agrees_with_veriEQL"] = agreement(result.outcome, result.reference.get("verdict"), result.kind)
     return detail
 
 
@@ -50,10 +50,12 @@ def compare_queries(ctx: "CaseContext") -> None:
         d.update(comparison_detail(result))
 
 
-def agreement(outcome: str, verdict: str | None) -> str:
+def agreement(outcome: str, verdict: str | None, kind: str | None = None) -> str:
     """How our outcome relates to VeriEQL's verdict for the pair."""
     if verdict is None:
         return "no reference"
+    if outcome == DIFFER and kind == COLUMNS:
+        return f"only a column-order difference (not counted); VeriEQL says {verdict}"
     if outcome == DIFFER:
         return "agree (both found a difference)" if verdict == "different" else \
             f"we found a difference, VeriEQL says {verdict}"

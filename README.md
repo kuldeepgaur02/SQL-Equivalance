@@ -479,7 +479,9 @@ log: `runs/<case>/handoff-<time>.json`.
 
 | `status` | When | Next (outside this project) |
 |---|---|---|
-| `counterexample` | Q1 and Q2 differ on the data, and the result is deterministic | Minimise → Explain → Output |
+| `counterexample` | different rows (or a different order where both queries use `ORDER BY`), deterministic | Minimise → Explain → Output |
+| `counterexample_error` | one query fails on this data (e.g. division by zero), the other does not | reported separately |
+| `column_order_only` | the same values in another column order (often `SELECT *` vs listed columns); **not counted** as a counterexample | the mutation stage |
 | `counterexample_untrusted` | they differ, but `LIMIT` without `ORDER BY` / a volatile function makes it unreliable | needs a deterministic query |
 | `to_mutation` | no difference yet; `starting_point` is `same` or `both_empty` (rebuilds ran out) | the mutation stage |
 

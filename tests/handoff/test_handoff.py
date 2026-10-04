@@ -5,7 +5,8 @@ import pytest
 
 from cexgen.compare import compare, run_pair
 from cexgen.db import SchemaWorkspace
-from cexgen.handoff import COUNTEREXAMPLE, FORMAT, MUTATION_ACTIONS, TO_MUTATION, UNTRUSTED, verify
+from cexgen.handoff import (COLUMN_ORDER_ONLY, COUNTEREXAMPLE, COUNTEREXAMPLE_ERROR, FORMAT, MUTATION_ACTIONS,
+                            TO_MUTATION, UNTRUSTED, verify)
 from cexgen.input import Case
 from cexgen.runner import run_cases
 
@@ -95,3 +96,16 @@ def test_verify_catches_a_replay_that_does_not_reproduce(settings):
     assert ok is False and "different result" in why
     ok, why = verify(settings, ddl, "BEGIN; INSERT INTO nope VALUES (1); COMMIT;", "SELECT 1", "SELECT 1", expected)
     assert ok is None and "did not run" in why
+
+
+def test_a_query_failing_is_its_own_status(run):
+    doc, _, _ = run(T, "SELECT 10 / (x - 1) FROM t", "SELECT 10 / nullif(x - 1, 0) FROM t")
+    assert doc["status"] == COUNTEREXAMPLE_ERROR and doc["result"]["kind"] == "error"
+    assert doc["data"]["replay_verified"] is True
+
+
+def test_column_order_only_is_not_a_counterexample_and_goes_on(run):
+    # x > 5 makes the base row (1, 6): swapping the columns gives (6, 1), the same values in another order
+    doc, _, _ = run("CREATE TABLE t (id int PRIMARY KEY, x int CHECK (x > 5));", "SELECT * FROM t", "SELECT x, id FROM t")
+    assert doc["status"] == COLUMN_ORDER_ONLY and doc["starting_point"] == "column_order_only"
+    assert doc["mutation"]["actions"] == MUTATION_ACTIONS             # still handed to the mutation stage

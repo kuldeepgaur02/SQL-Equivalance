@@ -3,7 +3,9 @@
 The diagram's MUTATION STAGE box: "LLM is primary — gets schema, both queries,
 current data, and every attempt already made with its exact result". So:
 
-    status      counterexample | counterexample_untrusted | to_mutation
+    status      counterexample (rows / order) | counterexample_error (one query fails) |
+                column_order_only (same values, other column order: not counted, handed on) |
+                counterexample_untrusted (not deterministic) | to_mutation
     schema      the SQL as given, and per table: columns, keys, FKs, CHECKs
     queries     Q1, Q2, and the filters Step 3 found in each
     data        every row in the database now, where each base value came from,
@@ -17,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..compare.model import BOTH_EMPTY, DIFFER, Comparison
+from ..compare.model import BOTH_EMPTY, COLUMNS, DIFFER, ERROR, Comparison
 from ..compare.normalize import display
 from ..compare.step import comparison_detail
 from ..journal.entry import to_jsonable
@@ -29,15 +31,25 @@ FORMAT = "cexgen-handoff/1"
 MUTATION_ACTIONS = ["set_null", "set_value", "add_row", "delete_row", "duplicate", "empty_table"]
 RESULT_ROWS = 50                                     # rows of each query's result kept in the hand-off
 
-COUNTEREXAMPLE = "counterexample"                    # Q1 and Q2 differ on this data: stop here
+COUNTEREXAMPLE = "counterexample"                    # different rows (or order): stop here
+COUNTEREXAMPLE_ERROR = "counterexample_error"        # one query fails on this data, the other does not
+COLUMN_ORDER_ONLY = "column_order_only"              # the same values in another column order: not counted;
+                                                     # still handed to the mutation stage
 UNTRUSTED = "counterexample_untrusted"               # they differ, but the result is not deterministic
 TO_MUTATION = "to_mutation"                          # no difference yet: the mutation stage searches further
+HANDED_TO_MUTATION = (TO_MUTATION, COLUMN_ORDER_ONLY)
 
 
 def status_of(comparison: Comparison) -> str:
-    if comparison.outcome == DIFFER:
-        return COUNTEREXAMPLE if comparison.counterexample else UNTRUSTED
-    return TO_MUTATION
+    if comparison.outcome != DIFFER:
+        return TO_MUTATION
+    if comparison.not_deterministic:
+        return UNTRUSTED
+    if comparison.kind == COLUMNS:
+        return COLUMN_ORDER_ONLY
+    if comparison.kind == ERROR:
+        return COUNTEREXAMPLE_ERROR
+    return COUNTEREXAMPLE
 
 
 def build_handoff(ctx, data_script: str | None, verified: tuple[bool | None, str] | None) -> dict[str, Any]:
@@ -52,7 +64,8 @@ def build_handoff(ctx, data_script: str | None, verified: tuple[bool | None, str
     doc: dict[str, Any] = {
         "format": FORMAT,
         "status": status,
-        "starting_point": comparison.outcome if status == TO_MUTATION else None,   # same | both_empty
+        "starting_point": (comparison.outcome if status == TO_MUTATION else          # same | both_empty
+                           "column_order_only" if status == COLUMN_ORDER_ONLY else None),
         "case": {"name": case.name, "source": case.source, "meta": dict(case.meta)},
         "schema": {"fingerprint": ctx.workspace.fingerprint, "sql": case.schema_sql,
                    "tables": {str(t.qname): _table(t) for t in model.tables.values() if t.insert_target}},

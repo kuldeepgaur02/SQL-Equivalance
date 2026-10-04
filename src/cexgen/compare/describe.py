@@ -21,9 +21,12 @@ def describe_comparison(c: Comparison) -> str:
     for n in c.not_deterministic:
         lines.append(f"  NOT DETERMINISTIC: {n}")
     if c.outcome == "differ":
-        lines.append("  counterexample: " + ("yes" if c.counterexample else "not trusted (result not deterministic)"))
+        lines.append("  counterexample: " + (
+            "yes" if c.counterexample else
+            "not trusted (result not deterministic)" if c.not_deterministic else
+            "no: the same values in another column order"))
     if c.reference:
-        lines.append(f"  VeriEQL: {c.reference.get('verdict')} -> {agreement(c.outcome, c.reference.get('verdict'))}")
+        lines.append(f"  VeriEQL: {c.reference.get('verdict')} -> {agreement(c.outcome, c.reference.get('verdict'), c.kind)}")
     return "\n".join(lines)
 
 
