@@ -56,6 +56,8 @@ def agreement(outcome: str, verdict: str | None, kind: str | None = None) -> str
         return "no reference"
     if outcome == DIFFER and kind == COLUMNS:
         return f"only a column-order difference (not counted); VeriEQL says {verdict}"
+    if outcome == DIFFER and kind == "error":
+        return f"a query fails on this data (not counted); VeriEQL says {verdict}"
     if outcome == DIFFER:
         return "agree (both found a difference)" if verdict == "different" else \
             f"we found a difference, VeriEQL says {verdict}"

@@ -5,8 +5,8 @@ import pytest
 
 from cexgen.compare import compare, run_pair
 from cexgen.db import SchemaWorkspace
-from cexgen.handoff import (COLUMN_ORDER_ONLY, COUNTEREXAMPLE, COUNTEREXAMPLE_ERROR, FORMAT, MUTATION_ACTIONS,
-                            TO_MUTATION, UNTRUSTED, verify)
+from cexgen.handoff import (COLUMN_ORDER_ONLY, COUNTEREXAMPLE, FORMAT, MUTATION_ACTIONS, TO_MUTATION, UNTRUSTED,
+                            verify)
 from cexgen.input import Case
 from cexgen.runner import run_cases
 
@@ -98,9 +98,12 @@ def test_verify_catches_a_replay_that_does_not_reproduce(settings):
     assert ok is None and "did not run" in why
 
 
-def test_a_query_failing_is_its_own_status(run):
+def test_a_query_failing_is_not_a_counterexample_and_the_search_goes_on(run):
+    # x = 1 makes Q1 divide by zero: a crash, not a silent wrong answer
     doc, _, _ = run(T, "SELECT 10 / (x - 1) FROM t", "SELECT 10 / nullif(x - 1, 0) FROM t")
-    assert doc["status"] == COUNTEREXAMPLE_ERROR and doc["result"]["kind"] == "error"
+    assert doc["status"] == TO_MUTATION and doc["starting_point"] == "one_query_fails"
+    assert doc["result"]["kind"] == "error" and "22012" in doc["flags"]["query_fails_on_data"][0]
+    assert "first change the data that makes a query fail" in doc["mutation"]["note"]
     assert doc["data"]["replay_verified"] is True
 
 

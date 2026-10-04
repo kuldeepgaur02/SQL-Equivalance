@@ -3,9 +3,10 @@
 The diagram's MUTATION STAGE box: "LLM is primary — gets schema, both queries,
 current data, and every attempt already made with its exact result". So:
 
-    status      counterexample (rows / order) | counterexample_error (one query fails) |
+    status      counterexample (both run, different rows / order) |
                 column_order_only (same values, other column order: not counted, handed on) |
-                counterexample_untrusted (not deterministic) | to_mutation
+                counterexample_untrusted (not deterministic) |
+                to_mutation (no difference yet, or a query fails on this data: not a counterexample)
     schema      the SQL as given, and per table: columns, keys, FKs, CHECKs
     queries     Q1, Q2, and the filters Step 3 found in each
     data        every row in the database now, where each base value came from,
@@ -31,25 +32,34 @@ FORMAT = "cexgen-handoff/1"
 MUTATION_ACTIONS = ["set_null", "set_value", "add_row", "delete_row", "duplicate", "empty_table"]
 RESULT_ROWS = 50                                     # rows of each query's result kept in the hand-off
 
-COUNTEREXAMPLE = "counterexample"                    # different rows (or order): stop here
-COUNTEREXAMPLE_ERROR = "counterexample_error"        # one query fails on this data, the other does not
+COUNTEREXAMPLE = "counterexample"                    # both run, silently different answers: stop here
 COLUMN_ORDER_ONLY = "column_order_only"              # the same values in another column order: not counted;
                                                      # still handed to the mutation stage
 UNTRUSTED = "counterexample_untrusted"               # they differ, but the result is not deterministic
-TO_MUTATION = "to_mutation"                          # no difference yet: the mutation stage searches further
+TO_MUTATION = "to_mutation"                          # no difference yet: the mutation stage searches further.
+                                                     # Also when one query FAILS on the data: a crash is not a
+                                                     # counterexample (we want silent wrong answers), so the
+                                                     # search goes on with starting_point "one_query_fails".
 HANDED_TO_MUTATION = (TO_MUTATION, COLUMN_ORDER_ONLY)
 
 
 def status_of(comparison: Comparison) -> str:
-    if comparison.outcome != DIFFER:
+    if comparison.outcome != DIFFER or comparison.kind == ERROR:
         return TO_MUTATION
     if comparison.not_deterministic:
         return UNTRUSTED
     if comparison.kind == COLUMNS:
         return COLUMN_ORDER_ONLY
-    if comparison.kind == ERROR:
-        return COUNTEREXAMPLE_ERROR
     return COUNTEREXAMPLE
+
+
+def starting_point(comparison: Comparison, status: str) -> str | None:
+    """Where the mutation stage starts from: same | both_empty | one_query_fails | column_order_only."""
+    if status == COLUMN_ORDER_ONLY:
+        return "column_order_only"
+    if status != TO_MUTATION:
+        return None
+    return "one_query_fails" if comparison.kind == ERROR else comparison.outcome
 
 
 def build_handoff(ctx, data_script: str | None, verified: tuple[bool | None, str] | None) -> dict[str, Any]:
@@ -64,8 +74,7 @@ def build_handoff(ctx, data_script: str | None, verified: tuple[bool | None, str
     doc: dict[str, Any] = {
         "format": FORMAT,
         "status": status,
-        "starting_point": (comparison.outcome if status == TO_MUTATION else          # same | both_empty
-                           "column_order_only" if status == COLUMN_ORDER_ONLY else None),
+        "starting_point": starting_point(comparison, status),
         "case": {"name": case.name, "source": case.source, "meta": dict(case.meta)},
         "schema": {"fingerprint": ctx.workspace.fingerprint, "sql": case.schema_sql,
                    "tables": {str(t.qname): _table(t) for t in model.tables.values() if t.insert_target}},
@@ -88,11 +97,16 @@ def build_handoff(ctx, data_script: str | None, verified: tuple[bool | None, str
                  "foreign_keys": {f"{p.fk.table}.{p.fk.name}": p.strategy for p in state["plan"].fks},
                  "skipped": {str(t): why for t, why in state["plan"].skipped.items()}},
         "flags": {"not_deterministic": list(comparison.not_deterministic),
+                  "query_fails_on_data": ([f"{r.label}: {r.error.get('sqlstate')} {r.error.get('message')}"
+                                           for r in (comparison.q1, comparison.q2) if r.error]),
                   "identical_queries": case.identical_queries,
                   "both_empty_after_rebuilds": comparison.outcome == BOTH_EMPTY,
                   "not_enforced_constraints": list(case.meta.get("not_enforced", []))},
         "mutation": {"actions": MUTATION_ACTIONS,
-                     "note": "apply actions on a copy of this data; the schema's rules must keep holding"},
+                     "goal": "data on which BOTH queries run without error and return different results",
+                     "note": "apply actions on a copy of this data; the schema's rules must keep holding"
+                             + ("; first change the data that makes a query fail"
+                                if comparison.kind == ERROR else "")},
         "llm": {"mode": "llm" if ctx.settings.llm_enabled else "rules",
                 "calls": getattr(state.get("oracle"), "calls", 0)},
         "journal": str(ctx.journal.path) if ctx.journal.path else None,

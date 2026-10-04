@@ -60,6 +60,7 @@ def test_errors():
     err = lambda code: {"sqlstate": code, "message": "x"}  # noqa: E731
     one = compare(run("Q1", [], error=err("22012")), run("Q2", [[1]]))
     assert (one.outcome, one.kind) == (DIFFER, ERROR) and "Q1 fails (22012" in one.reason
+    assert not one.counterexample                     # a crash is not a silent wrong answer
     assert compare(run("Q1", [], error=err("22012")), run("Q2", [], error=err("22012"))).outcome == SAME
     assert compare(run("Q1", [], error=err("22012")), run("Q2", [], error=err("22003"))).kind == ERROR
 

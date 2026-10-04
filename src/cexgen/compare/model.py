@@ -44,6 +44,7 @@ class Comparison:
 
     @property
     def counterexample(self) -> bool:
-        """A difference that can be trusted: the data makes Q1 and Q2 behave differently.
-        The same values in another column order does not count (see Step 9's statuses)."""
-        return self.outcome == DIFFER and not self.not_deterministic and self.kind != COLUMNS
+        """The goal of the project: both queries run without error on valid data and silently give
+        different answers (different rows, or a different order when both ask for one), deterministically.
+        A query failing on the data, or the same values in another column order, does not count."""
+        return self.outcome == DIFFER and not self.not_deterministic and self.kind in (ROWS, ORDER)

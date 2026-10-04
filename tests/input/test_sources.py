@@ -134,4 +134,4 @@ def test_empty_folder_and_missing_path(tmp_path):
 
 
 def test_whole_examples_folder():
-    assert len(load_cases(EXAMPLES)) == 5          # shop, cycle, and 3 batch pairs
+    assert len(load_cases(EXAMPLES)) == 6          # shop, cycle, rich_departments, and 3 batch pairs

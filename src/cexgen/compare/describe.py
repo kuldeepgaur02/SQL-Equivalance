@@ -23,6 +23,8 @@ def describe_comparison(c: Comparison) -> str:
     if c.outcome == "differ":
         lines.append("  counterexample: " + (
             "yes" if c.counterexample else
+            "no: a query fails on this data (we look for silent wrong answers; the search goes on)"
+            if c.kind == "error" else
             "not trusted (result not deterministic)" if c.not_deterministic else
             "no: the same values in another column order"))
     if c.reference:

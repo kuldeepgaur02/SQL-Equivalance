@@ -479,11 +479,10 @@ log: `runs/<case>/handoff-<time>.json`.
 
 | `status` | When | Next (outside this project) |
 |---|---|---|
-| `counterexample` | different rows (or a different order where both queries use `ORDER BY`), deterministic | Minimise → Explain → Output |
-| `counterexample_error` | one query fails on this data (e.g. division by zero), the other does not | reported separately |
+| `counterexample` | **both queries run without error** and give different rows (or a different order where both use `ORDER BY`), deterministically | Minimise → Explain → Output |
 | `column_order_only` | the same values in another column order (often `SELECT *` vs listed columns); **not counted** as a counterexample | the mutation stage |
 | `counterexample_untrusted` | they differ, but `LIMIT` without `ORDER BY` / a volatile function makes it unreliable | needs a deterministic query |
-| `to_mutation` | no difference yet; `starting_point` is `same` or `both_empty` (rebuilds ran out) | the mutation stage |
+| `to_mutation` | no difference yet; `starting_point` is `same`, `both_empty` (rebuilds ran out), or `one_query_fails` (a query crashes on this data: not a counterexample, since the goal is a **silent** wrong answer; the mutation stage changes that data first) | the mutation stage |
 
 What the document contains (the diagram's mutation box: "gets schema, both
 queries, current data, and every attempt already made with its exact result"):
