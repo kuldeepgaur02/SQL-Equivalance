@@ -5,6 +5,7 @@ one schema read the catalog once.
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from .reader import read_schema
@@ -24,5 +25,6 @@ def parse_schema(ctx: "CaseContext") -> None:
             model = read_schema(ws.conn, ws.inventory)
             ws.cache[CACHE_KEY] = model
         ctx.state["schema"] = model
+        logging.getLogger(__name__).debug("schema model: %s%s", model.stats(), " (cached)" if detail["cached"] else "")
         detail["stats"] = model.stats()
         detail["warnings"] = list(model.warnings)

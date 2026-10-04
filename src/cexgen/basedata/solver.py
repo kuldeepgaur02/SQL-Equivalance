@@ -130,8 +130,8 @@ def solve_row(table: Table, row: dict[str, Any], rules: tuple[Rule, ...]) -> lis
     for name, items in by_column.items():
         column = table.columns[name]
         preds = [p for _, p in items]
-        value = _best(column, preds, row[name])
-        if value is _NONE:
+        value = best_value(column, preds, row[name])
+        if value is NO_VALUE:
             unsatisfied += sorted({f"{r.name}: {r.expression}" for r, _ in items})
         else:
             row[name] = value
@@ -144,10 +144,12 @@ def solve_row(table: Table, row: dict[str, Any], rules: tuple[Rule, ...]) -> lis
     return sorted(set(unsatisfied))
 
 
-_NONE = object()
+NO_VALUE = object()          # best_value() found nothing
 
 
-def _best(column: Column, preds: list[Predicate], current: Any) -> Any:
+def best_value(column: Column, preds: list[Predicate], current: Any) -> Any:
+    """The first candidate (current value, then each predicate's witness, applied in turn) that
+    satisfies every predicate and fits the column; NO_VALUE if there is none."""
     def ok(v):
         return fits(v, column) and all(holds(p, v, column) for p in preds)
 
@@ -166,7 +168,7 @@ def _best(column: Column, preds: list[Predicate], current: Any) -> Any:
     for c in candidates:
         if ok(c):
             return c
-    return _NONE
+    return NO_VALUE
 
 
 def _fix_comparison(table: Table, row: dict, cmp, by_column) -> bool:

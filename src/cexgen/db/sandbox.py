@@ -69,6 +69,7 @@ class Sandbox:
     def apply_ddl(self, ddl: str) -> Inventory:
         """Run the case's schema SQL as one transaction and report what it created."""
         self._ensure_open()
+        log.debug("sandbox %s: running the schema SQL (%d characters)", self.name, len(ddl))
         _refuse_cluster_wide(ddl)
         del self.conn.notices[:]
         try:
@@ -100,6 +101,7 @@ class Sandbox:
             log.warning("keeping sandbox database %s (keep_db)", self.name)
         else:
             self._drop()
+            log.debug("sandbox %s dropped", self.name)
         if not self._admin.closed:
             self._admin.close()
 

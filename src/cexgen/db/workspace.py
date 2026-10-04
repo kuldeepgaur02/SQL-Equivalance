@@ -12,6 +12,7 @@ restored data.
 from __future__ import annotations
 
 import hashlib
+import logging
 
 import psycopg2
 from psycopg2 import sql
@@ -22,6 +23,8 @@ from ..sqltext.lexer import fingerprint
 from .inventory import Inventory
 from .sandbox import Sandbox
 from .seed import SeedState, capture, restore
+
+log = logging.getLogger(__name__)
 
 
 def schema_fingerprint(schema_sql: str) -> str:
@@ -58,6 +61,8 @@ class SchemaWorkspace:
 
     def reset(self) -> None:
         """Put the database back to exactly the state the schema SQL created."""
+        log.debug("reset %s: empty %d table(s), restore %d seed row(s) and %d sequence(s)", self.database,
+                  len(self.inventory.tables), self.seed.row_count, len(self.seed.sequences))
         restore(self.conn, self.inventory, self.seed)
         self.refresh_materialized_views()
 

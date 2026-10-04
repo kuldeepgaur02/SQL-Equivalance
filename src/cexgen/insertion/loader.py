@@ -15,6 +15,7 @@ and skips a child whose FK is NOT NULL.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Mapping
 
 import psycopg2
@@ -38,6 +39,8 @@ from .llm_repair import llm_fix
 from .model import CODE, LLM, RULES, RULES_AFTER_LLM, LoadResult, Repair
 from .sql import insert_statement, to_db, update_statement
 
+log = logging.getLogger(__name__)
+
 BASE_ROWS = "base_rows"          # schema memory: a row known to insert cleanly, per table (Step 5 reads it)
 FAILED_FIXES = "failed_fixes"    # schema memory: values that failed a constraint (shown to the LLM)
 SNAPSHOT_LIMIT = 1000
@@ -46,11 +49,12 @@ SNAPSHOT_LIMIT = 1000
 class Loader:
     def __init__(self, ws: SchemaWorkspace, model: SchemaModel, plan: InsertPlan, base: BaseData,
                  rules: Mapping[QName, tuple[Rule, ...]] | None, oracle: Oracle, journal: Journal,
-                 memory: SchemaMemory, max_repairs: int = 3):
+                 memory: SchemaMemory, max_repairs: int = 3, remember_rows: bool = True):
         self.ws, self.model, self.plan, self.base = ws, model, plan, base
         self.rules = rules or {}
         self.oracle, self.journal, self.memory = oracle, journal, memory
         self.max_repairs = max_repairs
+        self.remember_rows = remember_rows      # False for rebuilt rows: they belong to one case, not the schema
         self.rows: dict[QName, dict[str, Any]] = {}            # as Postgres stored them
         self.locs: dict[QName, tuple[int, str]] = {}           # (tableoid, ctid), for the planned UPDATEs
         self.skipped: dict[QName, str] = {}
@@ -260,7 +264,10 @@ class Loader:
     def _execute_insert(self, name: QName, row: dict) -> tuple[dict, tuple]:
         table = self.model.tables[name]
         cols = [c for c in table.insertable_columns if c.name in row]
-        self.cur.execute(insert_statement(table, cols), [to_db(row[c.name], c) for c in cols])
+        statement, params = insert_statement(table, cols), [to_db(row[c.name], c) for c in cols]
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("SQL %s", self.cur.mogrify(statement, params).decode())
+        self.cur.execute(statement, params)
         return self._fetch_returning()
 
     def _fetch_returning(self) -> tuple[dict, tuple]:
@@ -275,9 +282,11 @@ class Loader:
         self.rows[name], self.locs[name] = record, loc
         self.journal.record("insert", f"INSERT {name}", "ok",
                             detail={"attempt": attempt + 1, "row": to_jsonable(record)})
-        self.memory.put(BASE_ROWS, str(name), to_jsonable(sent))
+        if self.remember_rows:
+            self.memory.put(BASE_ROWS, str(name), to_jsonable(sent))
 
     def _skip(self, name: QName, reason: str) -> None:
+        log.warning("%s gets no row: %s", name, reason)
         self.skipped[name] = reason
         self.journal.record("insert", f"skip {name}", "skipped", detail={"reason": reason})
 

@@ -98,3 +98,53 @@ def repair_prompt(table_text: str, row_json: str, error: dict, constraint_text: 
               "as possible, keep foreign-key columns as they are, and make the row satisfy every rule of the "
               "table. Put a one-line reason in `note`."]
     return "\n".join(lines)
+
+
+# -- Step 8: rebuild the base when both queries return no rows ---------------------------
+
+REBUILD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "note": {"type": "string"},
+        "tables": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "table": {"type": "string"},
+                    "cells": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"column": {"type": "string"}, "value_json": {"type": "string"}},
+                            "required": ["column", "value_json"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["table", "cells"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["note", "tables"],
+    "additionalProperties": False,
+}
+
+
+def rebuild_prompt(schema_text: str, q1: str, q2: str, filters: list[str], rows_json: str,
+                   history: list[dict]) -> str:
+    lines = ["## Schema", schema_text, "", "## Q1", q1, "", "## Q2", q2]
+    if filters:
+        lines += ["", "## Conditions found in the queries"] + [f"- {f}" for f in filters]
+    lines += ["", "## Current data (one row per table); both queries return NO rows on it", rows_json]
+    for h in history:
+        lines += ["", f"## Earlier rebuild {h['round']} (did not help)", h["rows"],
+                  f"Result: Q1 {h['q1']}, Q2 {h['q2']}"]
+    lines += ["", "## Task",
+              "The data misses the queries' filters, so both return nothing. Change the values of this one row "
+              "per table so that at least one query (ideally both) returns rows: make the WHERE / JOIN / HAVING "
+              "conditions true, using the constants in the queries. Keep every rule of the schema (types, NOT NULL, "
+              "keys, CHECK). A foreign key value must equal the key of its parent row, so change both together. "
+              "List only the cells you change, per table. Do not repeat an earlier rebuild. One-line reason in `note`."]
+    return "\n".join(lines)

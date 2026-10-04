@@ -2,6 +2,7 @@
 
   FolderSource  a folder with schema.sql, q1.sql, q2.sql (and optional meta.json)
   BatchSource   a .json file: one schema, many named query pairs
+  VeriEQLSource a VeriEQL benchmark .jsonlines file (see veriEQL.py)
   SuiteSource   a folder of the above (searched recursively)
 
 To support a new input format, write a class with `matches(path)` and
@@ -10,6 +11,7 @@ To support a new input format, write a class with `matches(path)` and
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -17,6 +19,7 @@ from ..config import Settings, get_settings
 from ..errors import InputError
 from .case import Case
 from .files import read_text
+from .veriEQL import VeriEQLSource
 
 
 class Source(Protocol):
@@ -125,12 +128,21 @@ class SuiteSource:
 
 
 # Order matters: the first source whose `matches` is true loads the path.
-SOURCES: list[Source] = [FolderSource(), BatchSource(), SuiteSource()]
+SOURCES: list[Source] = [FolderSource(), BatchSource(), VeriEQLSource(), SuiteSource()]
 
 
-def load_cases(path: str | Path, settings: Settings | None = None) -> list[Case]:
-    """Load every case under `path` (a case folder, a batch .json, or a suite folder)."""
-    settings = settings or get_settings()
+def load_cases(path: str | Path, settings: Settings | None = None, sample: int | None = None,
+               seed: int = 0) -> list[Case]:
+    """Load every case under `path` (a case folder, a batch .json, a VeriEQL .jsonlines, or a suite folder).
+    `sample`: keep a fixed random subset of that size (same seed -> same cases, in their original order)."""
+    cases = _load_all(path, settings or get_settings())
+    if sample is not None and 0 < sample < len(cases):
+        keep = sorted(random.Random(seed).sample(range(len(cases)), sample))
+        cases = [cases[i] for i in keep]
+    return cases
+
+
+def _load_all(path: str | Path, settings: Settings) -> list[Case]:
     p = Path(path).expanduser()
     if not p.exists():
         raise InputError(f"no such file or folder: {p}")

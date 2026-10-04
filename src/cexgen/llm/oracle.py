@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,8 @@ from ..memory import SchemaMemory
 from . import prompts
 from .base import LLMCallFailed, LLMProvider
 from .registry import get_provider
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -51,12 +54,15 @@ class Oracle:
     def ask(self, step: str, purpose: str, prompt: str, schema: dict) -> dict | None:
         """One LLM call, recorded in the attempt log. None if the call failed (caller uses rules)."""
         provider = self.provider()
+        log.info("LLM request (%s / %s): %s, prompt %d characters", provider.name, self.settings.llm_model,
+                 purpose, len(prompt))
         t0 = time.perf_counter()
         self.calls += 1
         llm_info = {"provider": provider.name, "model": self.settings.llm_model, "purpose": purpose}
         try:
             result = provider.complete_json(prompts.SYSTEM, prompt, schema, purpose)
         except LLMCallFailed as e:
+            log.warning("LLM call failed (%s): %s; the rule table is used instead", purpose, e)
             self.journal.record(step, f"LLM: {purpose}", "failed", error={"type": "LLMCallFailed", "message": str(e)},
                                 llm=llm_info, duration_ms=(time.perf_counter() - t0) * 1000,
                                 detail={"fallback": "rule table", "prompt": prompt})

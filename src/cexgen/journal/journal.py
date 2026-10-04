@@ -10,17 +10,43 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import logging
 import re
 import time
 import traceback
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Protocol
 
 import psycopg2
 
 from ..errors import CexError
 from .entry import STATUSES, STEPS, Entry
+
+
+log = logging.getLogger(__name__)
+
+
+class JournalListener(Protocol):
+    """Told about every action as it happens (the live console, the run log file)."""
+
+    def started(self, case: str, step: str, action: str) -> None: ...
+
+    def recorded(self, entry: Entry, journal: "Journal") -> None: ...
+
+
+# Listeners for every journal in this process. The CLI adds the console and the run log here.
+LISTENERS: list[JournalListener] = []
+
+
+def add_listener(listener: JournalListener) -> None:
+    if listener not in LISTENERS:
+        LISTENERS.append(listener)
+
+
+def remove_listener(listener: JournalListener) -> None:
+    if listener in LISTENERS:
+        LISTENERS.remove(listener)
 
 
 class Journal:
@@ -56,7 +82,20 @@ class Journal:
         if self._file is not None:
             self._file.write(json.dumps(entry.to_json(), ensure_ascii=False) + "\n")
             self._file.flush()
+        for listener in list(LISTENERS):
+            try:
+                listener.recorded(entry, self)
+            except Exception:                     # a broken listener must never break a run
+                log.exception("journal listener failed")
         return entry
+
+    def begin(self, step: str, action: str) -> None:
+        """Announce that an action starts (shown live; the entry itself is recorded when it ends)."""
+        for listener in list(LISTENERS):
+            try:
+                listener.started(self.case, step, action)
+            except Exception:
+                log.exception("journal listener failed")
 
     @contextmanager
     def timed(self, step: str, action: str, **kw) -> Iterator[dict]:
@@ -64,6 +103,7 @@ class Journal:
         dict. An exception is recorded as a failure and then re-raised."""
         detail: dict[str, Any] = dict(kw.pop("detail", None) or {})
         status = kw.pop("status", "ok")
+        self.begin(step, action)
         at, t0 = _now(), time.perf_counter()
         try:
             yield detail

@@ -19,16 +19,20 @@ from typing import Any, Callable
 
 from .. import __version__
 from ..basedata.step import build_base_data
+from ..compare.step import compare_queries
 from ..config import Settings, get_settings
 from ..db.connection import safe_dsn
 from ..db.workspace import SchemaWorkspace, schema_fingerprint
 from ..errors import CexError
 from ..input import Case
+from ..handoff.step import hand_off
 from ..insertion.step import insert_base
 from ..journal import Journal
 from ..memory import SchemaMemory
+from ..observe.format import CURRENT_CASE
 from ..ordering.step import plan_order
 from ..queries.step import parse_queries
+from ..rebuild.loop import rebuild_until_rows
 from ..schema.step import parse_schema
 
 log = logging.getLogger(__name__)
@@ -51,8 +55,28 @@ class CaseContext:
 
 Step = Callable[[CaseContext], None]
 
+# How each step is announced in the live view and the run log (the diagram's boxes).
+STEP_TITLES: dict = {}
+
+
+def _titles() -> dict:
+    if not STEP_TITLES:
+        STEP_TITLES.update({
+            parse_schema: "Step 2 · Parse schema (Postgres catalog)",
+            parse_queries: "Step 3 · Parse queries (Postgres check + sqlglot)",
+            plan_order: "Step 4 · Table order (FK graph)",
+            build_base_data: "Step 5 · Base data, one row per table",
+            insert_base: "Step 6 · INSERT into Postgres + repair loop",
+            compare_queries: "Step 7 · Run Q1 and Q2, compare",
+            rebuild_until_rows: "Step 8 · Rebuild the base if both results are empty",
+            hand_off: "Step 9 · Hand-off to the mutation stage (or stop: counterexample)",
+        })
+    return STEP_TITLES
+
+
 # Steps in order; each later step is appended as it is built.
-PIPELINE: list[Step] = [parse_schema, parse_queries, plan_order, build_base_data, insert_base]
+PIPELINE: list[Step] = [parse_schema, parse_queries, plan_order, build_base_data, insert_base, compare_queries,
+                        rebuild_until_rows, hand_off]
 
 
 @dataclass
@@ -86,10 +110,12 @@ def run_cases(cases: list[Case], settings: Settings | None = None,
 
 def _run_schema(schema_sql: str, cases: list[Case], settings: Settings, steps: list[Step]) -> SchemaRun:
     run = SchemaRun(fingerprint=schema_fingerprint(schema_sql), cases=[])
+    log.info("schema %s: building its sandbox database for %d case(s)", run.fingerprint, len(cases))
     try:
         workspace = SchemaWorkspace(schema_sql, settings)
     except CexError as e:
         run.error = str(e)
+        log.error("schema %s could not be built: %s", run.fingerprint, str(e).splitlines()[0])
         for case in cases:
             with Journal.for_case(case.name, settings.runs_dir) as j:
                 _start(j, case, settings, run.fingerprint)
@@ -111,10 +137,21 @@ def _run_schema(schema_sql: str, cases: list[Case], settings: Settings, steps: l
 
 def _run_case(case: Case, ws: SchemaWorkspace, memory: SchemaMemory, settings: Settings,
               steps: list[Step]) -> CaseRun:
+    token = CURRENT_CASE.set(case.name)
+    try:
+        return _run_case_logged(case, ws, memory, settings, steps)
+    finally:
+        CURRENT_CASE.reset(token)
+
+
+def _run_case_logged(case: Case, ws: SchemaWorkspace, memory: SchemaMemory, settings: Settings,
+                     steps: list[Step]) -> CaseRun:
+    log.info("case %s: start (%s)", case.name, case.source)
     with Journal.for_case(case.name, settings.runs_dir) as j:
         _start(j, case, settings, ws.fingerprint)
         ctx = CaseContext(case, ws, j, memory, settings)
         try:
+            j.begin("run", "Step 1 · Input checked; reset the sandbox to the schema's initial state")
             with j.timed("setup", "reset database to the schema's initial state") as d:
                 ws.reset()
                 d.update(database=ws.database, seed_rows=ws.seed.row_count,
@@ -122,7 +159,9 @@ def _run_case(case: Case, ws: SchemaWorkspace, memory: SchemaMemory, settings: S
                          warnings=ws.inventory.warnings(), schema_memory=memory.key if memory.persistent else None)
             if case.identical_queries:
                 j.record("setup", "Q1 and Q2 are the same query text", "info")
+            titles = _titles()
             for step in steps:
+                j.begin("run", titles.get(step, f"step {getattr(step, '__name__', step)}"))
                 step(ctx)
         except CexError as e:
             j.record("run", "case stopped", "failed", error=e)

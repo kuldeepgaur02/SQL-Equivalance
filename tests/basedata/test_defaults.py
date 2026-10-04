@@ -72,3 +72,8 @@ def test_fits_limits():
     assert fits(Decimal("99.99"), num) and not fits(Decimal("100"), num)
     assert fits(Decimal("99.994"), num) and not fits(Decimal("99.995"), num)    # rounds to the scale first
     assert not fits(None, col(t(Family.TEXT, "text"), nullable=False))
+
+
+def test_stepping_a_value_of_the_wrong_type_gives_none():
+    int4 = col(t(Family.INTEGER, "int4", min_value=-2147483648, max_value=2147483647))
+    assert successor("SECURITY", int4) is None and predecessor(None, int4) is None

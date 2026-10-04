@@ -14,9 +14,9 @@ Built one step at a time, following the pipeline diagram up to the mutation stag
 | 4 | Table order (FK graph) | done |
 | 5 | Base data — one row per table | done |
 | 6 | INSERT into Postgres + repair loop | done |
-| 7 | Run Q1 and Q2 — compare | next |
-| 8 | LLM: rebuild base | |
-| 9 | Hand-off to the mutation stage | |
+| 7 | Run Q1 and Q2 — compare | done |
+| 8 | LLM: rebuild base | done |
+| 9 | Hand-off to the mutation stage | done |
 
 ## Setup
 
@@ -83,7 +83,8 @@ src/cexgen/
 ├── input/               Step 1: Input
 │   ├── case.py          Case: validated schema + Q1 + Q2
 │   ├── files.py         safe file reading (size limit, UTF-8 / BOM)
-│   └── sources.py       folder / batch / suite sources, load_cases()
+│   ├── sources.py       folder / batch / suite sources, load_cases() (+ --sample / --seed)
+│   └── veriEQL.py       VeriEQL benchmark importer (schema, constraints, MySQL -> Postgres, verdicts)
 ├── db/                  Step 1: Postgres
 │   ├── connection.py    connections: timeouts, pinned session settings, clear errors
 │   ├── sandbox.py       one temporary database (create, run schema SQL, drop)
@@ -130,6 +131,27 @@ src/cexgen/
 │   ├── llm_repair.py    CHECK / unknown: the LLM, with every earlier attempt; answer validated
 │   ├── loader.py        the loop: savepoints, cycles, FK re-sync, 3 repairs then skip, UPDATEs, read-back
 │   └── model.py, describe.py, step.py
+├── compare/             Step 7: Run Q1 and Q2 — compare
+│   ├── execute.py       both queries in ONE read-only snapshot; savepoint each; result cap
+│   ├── normalize.py     values -> comparable keys (5 = 5.0, char(n) padding, NULL = NULL only, JSON)
+│   ├── ordering.py      what ORDER BY decides (sort keys), and LIMIT / DISTINCT ON nondeterminism
+│   ├── compare.py       the outcome: differ (rows / order / error / columns), same, both empty
+│   └── model.py, describe.py, step.py
+├── rebuild/             Step 8: LLM: rebuild base (when both results are empty)
+│   ├── loop.py          rebuild -> reset -> INSERT (Step 6) -> compare (Step 7), at most max_rebuilds rounds
+│   ├── llm.py           the LLM rewrites the base rows (sees filters, current rows, earlier rounds)
+│   ├── rules.py         --no-llm: write the queries' filter values in (Q1, then Q2, then both)
+│   ├── rows.py          current rows, FK values that move parent keys, back to a base
+│   └── model.py         Round: one "data -> INSERT -> compare" with its exact result
+├── handoff/             Step 9: hand-off to the mutation stage (or stop: counterexample)
+│   ├── build.py         the hand-off document: schema, queries, data, every attempt, mutation actions
+│   ├── replay.py        a script recreating the exact database, verified in a fresh one
+│   └── step.py          writes runs/<case>/handoff-<time>.json
+├── observe/             seeing what happens: live console (-v / --debug) and the run log file
+│   ├── console.py       the live view, coloured
+│   ├── runlog.py        runs/_logs/<time>-<command>.log: header, every event, summary
+│   ├── format.py        one event -> one line (+ full detail)
+│   └── session.py       switches both on for a CLI run
 ├── llm/                 the LLM, behind a provider interface
 │   ├── base.py          LLMProvider: complete_json(system, prompt, schema)
 │   ├── registry.py      which providers exist; add another API here
@@ -340,3 +362,174 @@ then skip.
   them next time); values that failed a constraint are kept (`failed_fixes`,
   shown to the LLM).
 - Every attempt, error, repair and LLM call is in the case's attempt log.
+
+## Test data: the VeriEQL benchmarks
+
+[VeriEQL](https://github.com/VeriEQL/VeriEQL) (OOPSLA 2024) is a checker that
+proves two queries equivalent, or finds a counterexample database where they
+differ. Its benchmarks are cloned to `datasets/VeriEQL/`, outside the code and
+ignored by git. Licence: **CC BY-NC-SA 4.0** (non-commercial use with
+attribution; adapted material under the same licence). Cite the paper; do not
+ship the data inside this package.
+
+```bash
+git clone --depth 1 https://github.com/VeriEQL/VeriEQL.git datasets/VeriEQL     # once
+cexgen check datasets/VeriEQL/benchmarks/literature/literature-rewrite.jsonlines --no-llm
+cexgen check datasets/VeriEQL/benchmarks/calcite/calcite2.jsonlines --no-llm
+cexgen check datasets/VeriEQL/benchmarks/leetcode/leetcode.jsonlines --sample 500 --seed 42 --no-llm
+```
+
+`--sample N --seed S` picks the same N cases every time, so runs can be compared.
+
+Each `.jsonlines` entry (schema, constraints, query pair) becomes a case with
+a PostgreSQL schema (`src/cexgen/input/veriEQL.py`):
+
+- **Keys:** the first `primary` entry of a table becomes `PRIMARY KEY`;
+  later ones become `UNIQUE` + `NOT NULL`. Several columns in one entry make
+  a composite key.
+- **Foreign keys:** a `foreign` becomes a real FK when the parent column is a
+  key. Otherwise it is recorded in `meta["not_enforced"]`, because Postgres
+  needs a unique parent column.
+- **Value rules:** `gt/gte/lt/lte/between/in` become CHECKs plus `NOT NULL`,
+  because VeriEQL rejects NULL for them; `eq/neq` allow NULL.
+- **Enums:** `ENUM,a,b` becomes `varchar` + `CHECK (... IN (...))`, since MySQL
+  enums behave like strings. A `NULL` label means the column may be NULL.
+- **Booleans:** `BOOL` is MySQL's `TINYINT(1)`, so it becomes `smallint` in
+  LeetCode and a real `boolean` in Calcite.
+- **Rules Postgres cannot declare** (`imply`, `inc`, `consec`, cross-table
+  comparisons) are recorded in `meta["not_enforced"]` and not emulated.
+- **LeetCode queries are MySQL:** they are translated with sqlglot, and the
+  translation keeps MySQL's meaning where Postgres differs (case-insensitive
+  names; `SUM(a > b)` counts TRUE as 1; `ROUND(x, n)`; `CONCAT` of numbers;
+  division by zero gives NULL). The originals are kept in `meta["original_pair"]`.
+- **Calcite names** like `$f0` are quoted.
+- **VeriEQL's own verdict** for the pair (`different` with its counterexample,
+  `equivalent_bounded` (only for small tables, not proven), or `undecided`) is
+  attached as `meta["veriEQL"]`. It is matched by the exact query pair, because
+  `index` is not unique in LeetCode.
+
+Steps 1–6 on these sets (`--no-llm`, Postgres 15, 2026-10-04):
+
+| Set | Cases | Run through Steps 1–6 | Main reasons for the rest |
+|---|---|---|---|
+| Literature (rewrite) | 64 | 49 | VeriEQL's symbolic predicates (`b1(x)`), invalid columns or types in the benchmark |
+| Calcite | 397 | 365 | Calcite-only functions (`SINGLE_VALUE`, `ANY_VALUE`, multi-argument `COUNT`) |
+| LeetCode (500, seed 42) | 500 | 411 | MySQL-only behaviour: lenient `GROUP BY`, `SELECT` aliases in `HAVING`, columns missing from the schema |
+
+Failures are not hidden: each is reported with Postgres's exact error, and
+the case's attempt log has the details.
+
+## Step 7: run Q1 and Q2 and compare
+
+Both queries run in one `REPEATABLE READ, READ ONLY` transaction, so they see
+exactly the same data and the same `now()`. Each runs under its own savepoint,
+so a failing Q1 does not stop Q2.
+
+| Rule (agreed) | |
+|---|---|
+| Rows | compared as a bag (the diagram: sort rows, keep duplicates, NULL stays NULL) |
+| Order | compared only when **both** queries have a top-level `ORDER BY`, and only where it decides: rows tied on the sort key are interchangeable. Sort keys not in the select list are read by running the query with them added |
+| Values | exact, by value: `5` = `5.0`, `0.1` (float) = `0.1` (numeric), `'5'` ≠ `5`, `char(n)` padding ignored. A type difference is only a note |
+| Run-time errors | one query fails, or they fail differently → `differ (error)`; same error on both → `same` |
+| Not deterministic | `LIMIT/OFFSET` without `ORDER BY`, `DISTINCT ON` without `ORDER BY`, volatile functions → a difference is reported but not trusted as a counterexample |
+
+| Outcome | Next |
+|---|---|
+| `differ (rows)`, `differ (order)` | counterexample |
+| `differ (error)`, `differ (columns)` | reported apart; `columns` = the same values in another column order (often `SELECT *` on a schema whose column order differs from the source) |
+| `same` | → mutation stage |
+| `both empty` | → Step 8: rebuild the base |
+
+For VeriEQL cases, the attempt log records VeriEQL's verdict next to ours.
+
+## Step 8: rebuild the base when both results are empty
+
+As the diagram's loop: both results empty (the data misses the filters) →
+rebuild the base → INSERT with repairs (Step 6) → compare (Step 7). It stops
+when a result is not empty, or after `max_rebuilds` rounds (default 3).
+
+- **The shape stays one row per table.** Rebuilding changes values to hit the
+  filters. More rows (duplicates, `HAVING COUNT(*) > 1`) are what the mutation
+  stage's `add_row` / `duplicate` actions are for.
+- **LLM:** it sees the schema, both queries, the conditions Step 3 found, the
+  current rows, and every earlier round with its exact result. Its answer is
+  checked (known tables and columns, values that fit). If it fails or changes
+  nothing usable, the rule table runs that round instead.
+- **Rule table (`--no-llm`):** writes the queries' filter values into the
+  rows, e.g. `amount > 100` → `100.01`. Round 1 uses Q1's filters, round 2
+  Q2's, round 3 both, plus filters inside `OR`. Join equalities are made true.
+  A filter on an FK column moves the parent's key with it. If a filter
+  conflicts with a CHECK, the CHECK wins and the conflict is reported.
+- **Not saved to schema memory:** rebuilt rows belong to one case's queries,
+  so they never become another case's base.
+- **Every round is kept** (`state["rounds"]`) with its rows, what Postgres
+  stored, and the comparison. That is the "every attempt with its exact result"
+  the mutation stage receives.
+
+On VeriEQL (`--no-llm`), Step 8 turned 69 of 129 "both empty" Calcite cases,
+7 of 24 Literature cases and 35 of 152 LeetCode cases (sample of 500) into
+cases with rows, a few of them already counterexamples. The rest involve
+conditions the rule table cannot write (aggregates in `HAVING`, `EXISTS`,
+several rows); the LLM mode is meant for those.
+
+## Step 9: the hand-off
+
+The end of the pipeline. Each case gets one JSON document next to its attempt
+log: `runs/<case>/handoff-<time>.json`.
+
+| `status` | When | Next (outside this project) |
+|---|---|---|
+| `counterexample` | Q1 and Q2 differ on the data, and the result is deterministic | Minimise → Explain → Output |
+| `counterexample_untrusted` | they differ, but `LIMIT` without `ORDER BY` / a volatile function makes it unreliable | needs a deterministic query |
+| `to_mutation` | no difference yet; `starting_point` is `same` or `both_empty` (rebuilds ran out) | the mutation stage |
+
+What the document contains (the diagram's mutation box: "gets schema, both
+queries, current data, and every attempt already made with its exact result"):
+
+- `schema`: the SQL as given, plus per table its columns, types, keys, FKs and CHECKs;
+- `queries`: Q1, Q2, the filters / joins / features Step 3 found, and the result columns;
+- `data`: every row in the database now (seed rows, base rows, rows triggers added),
+  where each base value came from, and `replay_sql`, a script that recreates
+  exactly this database;
+- `result`: the final comparison, including the rows only in Q1 / only in Q2;
+- `attempts`: every round (the base, then each rebuild) with the rows planned,
+  the rows stored, the repairs, and the comparison it gave;
+- `plan`, `flags`, `mutation.actions` (`set_null`, `set_value`, `add_row`,
+  `delete_row`, `duplicate`, `empty_table`), `llm`, and the journal path.
+
+**The replay is verified.** Step 9 runs `replay_sql` in a fresh sandbox
+database and compares Q1 and Q2 again; `replay_verified` is true only if both
+results come out exactly the same. On the VeriEQL runs (Literature, Calcite,
+500 LeetCode pairs), 826 of 826 hand-offs reproduced.
+
+## Seeing what happens: live view and run logs
+
+```bash
+cexgen check examples --no-llm          # short summary per case (as before)
+cexgen check examples --no-llm -v       # live: each step of the diagram, each action and its result
+cexgen check examples --no-llm --debug  # live: also every SQL statement, sandbox, reset, LLM request, full errors
+cexgen logs                             # show the newest run log
+cexgen logs --list                      # all run logs, newest first
+cexgen logs --clean 30                  # delete run logs older than 30 days
+```
+
+`-v`, `--debug` and `--no-run-log` work before or after the command name.
+
+**Every run writes a run log** (unless `--no-run-log`):
+`runs/_logs/<UTC time>-<command>.log`, with:
+
+- a header: the command, the settings (database password hidden), Python and
+  Postgres versions, LLM on or off;
+- every event as it happens: each step of the diagram as it starts
+  (`▶ Step 6 · INSERT into Postgres + repair loop`), each action with its
+  result, timing and **full detail** (rows, errors with SQLSTATE and
+  constraint, repairs, LLM prompts and answers with token counts), every SQL
+  statement sent, sandbox databases created and dropped, and tracebacks;
+- a summary: cases ok / failed, outcomes, hand-off statuses and files, LLM
+  calls and tokens, time taken, and every error again.
+
+The file is flushed as it is written, so an interrupted or crashed run still
+leaves its log, crash traceback included. Logs from the HTTP / Anthropic
+libraries are capped at WARNING, so request headers and API keys never reach
+it. The per-case attempt logs (`runs/<case>/*.jsonl`) and hand-off files are
+unchanged, and the run log points to them.

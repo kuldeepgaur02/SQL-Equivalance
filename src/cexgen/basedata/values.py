@@ -71,11 +71,22 @@ def compare(a: Any, b: Any, column: Column) -> int | None:
 
 
 def successor(value: Any, column: Column) -> Any:
-    return _step(value, column, +1)
+    return _safe_step(value, column, +1)
 
 
 def predecessor(value: Any, column: Column) -> Any:
-    return _step(value, column, -1)
+    return _safe_step(value, column, -1)
+
+
+def _safe_step(value: Any, column: Column, direction: int) -> Any:
+    """None when there is no next value, or the value does not belong to the column's type
+    (a rule comparing an integer column with a text constant, say): never an exception."""
+    if value is None:
+        return None
+    try:
+        return _step(value, column, direction)
+    except (InvalidOperation, ValueError, TypeError, OverflowError):
+        return None
 
 
 def _step(value: Any, column: Column, direction: int) -> Any:

@@ -43,6 +43,18 @@ class Settings:
     # Input files larger than this are rejected before reading them into memory.
     max_input_bytes: int = 10 * 1024 * 1024
 
+    # Step 8: rounds of "rebuild the base -> INSERT -> compare" while both results are empty.
+    max_rebuilds: int = 3
+
+    # Step 9: re-create the handed-off data in a fresh database and compare again, to prove it reproduces.
+    verify_handoff: bool = True
+
+    # Step 7 reads at most this many rows of each query's result (a bigger result is flagged as truncated).
+    max_result_rows: int = 100_000
+
+    # Every CLI run writes <runs_dir>/_logs/<time>-<command>.log with everything that happened.
+    run_log: bool = True
+
     # Attempt logs go to <runs_dir>/<case>/, schema memory to <runs_dir>/_schemas/.
     runs_dir: str = "runs"
     # Reuse (and update) what earlier runs learned about a schema. Off = a clean run (--fresh).

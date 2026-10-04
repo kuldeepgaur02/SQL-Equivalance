@@ -70,9 +70,19 @@ def build_base(model: SchemaModel, plan: InsertPlan, rules: Mapping[QName, tuple
         for (name, col), answer in json_array_values(wanted, model, queries, oracle).items():
             rows[name][col] = Cell(answer.value, answer.source, answer.note)
 
-    # 4: foreign keys, in plan order (a parent's key is final before its children copy it)
+    # 4: foreign keys, as the insert plan says
+    updates = fill_foreign_keys(model, plan, rows)
+
+    return BaseData(rows=rows, updates=tuple(updates), unsatisfied=tuple(unsatisfied), warnings=tuple(warnings))
+
+
+def fill_foreign_keys(model: SchemaModel, plan: InsertPlan, rows: dict[QName, dict[str, Cell]]) -> list[PendingUpdate]:
+    """Fill FK columns in plan order (a parent's key is final before its children copy it).
+    Shared by Step 5 (the base) and Step 8 (a rebuilt base). Returns the UPDATEs to run later."""
     updates: list[PendingUpdate] = []
     for name in plan.order:
+        if name not in rows:
+            continue
         for fkp in plan.fks_of(name):
             fk, row = fkp.fk, rows[name]
             source_row = row if fkp.strategy == SELF or fk.self_reference else rows.get(root_table(model, fk.ref_table))
@@ -90,12 +100,11 @@ def build_base(model: SchemaModel, plan: InsertPlan, rules: Mapping[QName, tuple
                     if c not in fkp.null_columns:
                         row[c] = Cell(target[c], FK, fk.name)
                 updates.append(PendingUpdate(name, fk, target))
-
-    return BaseData(rows=rows, updates=tuple(updates), unsatisfied=tuple(unsatisfied), warnings=tuple(warnings))
+    return updates
 
 
 def cell_values(cells: Mapping[str, Cell]) -> dict[str, Any]:
     return {k: c.value for k, c in cells.items()}
 
 
-__all__ = ["build_base", "cell_values", "Column"]
+__all__ = ["build_base", "fill_foreign_keys", "cell_values", "Column"]

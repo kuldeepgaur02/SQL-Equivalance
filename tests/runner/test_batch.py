@@ -143,3 +143,24 @@ def test_insert_step_follows_base_data_step(run_settings):
     [run] = run_cases([case("a")], run_settings.with_(llm_enabled=False))
     load = run.cases[0].state["load"]
     assert len(load.snapshot[next(iter(load.snapshot))]) == 2        # the seed row + the base row
+
+
+def test_compare_step_follows_insert_step(run_settings):
+    from cexgen.compare import compare_queries
+    from cexgen.runner import PIPELINE
+
+    assert PIPELINE[5] is compare_queries
+    [run] = run_cases([case("a")], run_settings.with_(llm_enabled=False))
+    c = run.cases[0].state["comparison"]
+    assert c.outcome == "same"                     # seed row 1 + base row 1: x > 0 holds for both
+    entry = next(e for e in Journal.load(run.cases[0].journal_path) if e.step == "compare")
+    assert entry.detail["outcome"] == "same" and entry.detail["q1"]["rows"] == 2
+
+
+def test_handoff_is_the_last_step(run_settings):
+    from cexgen.handoff import hand_off
+    from cexgen.runner import PIPELINE
+
+    assert PIPELINE[-1] is hand_off and len(PIPELINE) == 8
+    [run] = run_cases([case("a")], run_settings.with_(llm_enabled=False))
+    assert run.cases[0].state["handoff"]["status"] == "to_mutation"

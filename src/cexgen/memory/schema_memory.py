@@ -86,6 +86,7 @@ class SchemaMemory:
         re-read under a lock and only the keys we changed are applied on top of it."""
         if self.path is None or not (self._changed or self._deleted):
             return
+        log.debug("schema memory %s: saving %d change(s)", self.path.name, len(self._changed) + len(self._deleted))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with _locked(self.path.with_suffix(".lock")):
             facts = _read(self.path, self.key)
