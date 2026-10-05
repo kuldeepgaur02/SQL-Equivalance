@@ -79,8 +79,11 @@ def test_replay_reproduces_hard_data(run):
     assert doc["data"]["replay_verified"] is True, doc["data"]["replay_note"]
     assert sorted(r[0] for r in doc["data"]["tables"]["public.audit"]["rows"]) == ["emp 1", "seeded"]
     script = doc["data"]["replay_sql"]
-    assert "OVERRIDING SYSTEM VALUE" in script and "session_replication_role = replica" in script
-    assert script.index('"public"."dept"') < script.index('INSERT INTO "public"."emp"')   # parents first
+    assert "session_replication_role" not in script                      # no superuser needed
+    assert "OVERRIDING SYSTEM VALUE" in script and 'ALTER TABLE "public"."emp" DISABLE TRIGGER USER;' in script
+    assert script.index('INSERT INTO "public"."dept"') < script.index('INSERT INTO "public"."emp"')   # parents first
+    assert "NOT DEFERRABLE;" in script                                 # cycle FKs set back afterwards
+    assert doc["environment"]["collation"] == "C"
 
 
 def test_verify_catches_a_replay_that_does_not_reproduce(settings):

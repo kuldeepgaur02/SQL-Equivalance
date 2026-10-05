@@ -56,8 +56,5 @@ class InsertPlan:
     def order(self) -> list[QName]:
         return [t for s in self.steps for t in s.tables]
 
-    def fk_plan(self, table: QName, fk_name: str) -> FkPlan | None:
-        return next((p for p in self.fks if p.key == (table, fk_name)), None)
-
     def fks_of(self, table: QName) -> list[FkPlan]:
         return [p for p in self.fks if p.fk.table == table]

@@ -40,7 +40,6 @@ TO_MUTATION = "to_mutation"                          # no difference yet: the mu
                                                      # Also when one query FAILS on the data: a crash is not a
                                                      # counterexample (we want silent wrong answers), so the
                                                      # search goes on with starting_point "one_query_fails".
-HANDED_TO_MUTATION = (TO_MUTATION, COLUMN_ORDER_ONLY)
 
 
 def status_of(comparison: Comparison) -> str:

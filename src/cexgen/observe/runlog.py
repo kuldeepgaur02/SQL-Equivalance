@@ -14,7 +14,6 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import platform
-import sys
 import time
 import traceback
 from collections import Counter

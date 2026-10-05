@@ -116,9 +116,6 @@ class QueryInfo:
     unparsed: tuple[str, ...] = ()           # conditions that could not be broken down (hints for the LLM)
     warnings: tuple[str, ...] = ()
 
-    def predicates_on(self, ref: ColumnRef) -> list[Predicate]:
-        return [p for p in self.predicates if p.term.column == ref]
-
 
 @dataclass(frozen=True)
 class QueryPair:

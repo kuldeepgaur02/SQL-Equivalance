@@ -8,7 +8,6 @@ from __future__ import annotations
 from typing import Any
 
 from ..schema.model import Column
-from ..schema.types import Family
 
 JSON_LEAF = "a"
 
@@ -55,7 +54,3 @@ def _has_path(doc: Any, path: tuple) -> bool:
         else:
             return False
     return True
-
-
-def is_json_column(column: Column) -> bool:
-    return column.type.family == Family.JSON

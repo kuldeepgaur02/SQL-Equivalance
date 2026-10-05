@@ -5,7 +5,7 @@ family, so a new type only needs a family, not new code everywhere.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .names import QName
 
@@ -95,10 +95,6 @@ class TypeInfo:
     domain_not_null: bool = False
     domain_checks: tuple[DomainCheck, ...] = ()
     extension: str | None = None         # extension that defines the base type (citext, hstore ...)
-
-    @property
-    def is_domain(self) -> bool:
-        return bool(self.domains)
 
 
 def family_of(base: str) -> str:

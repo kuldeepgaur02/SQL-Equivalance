@@ -19,7 +19,7 @@ from ..schema.model import SchemaModel
 from ..schema.names import QName
 from ..sqltext.lexer import CODE, tokenize
 from .expressions import JSON_EXTRACT, Conditions, ExpressionAnalyzer, _JSON_FUNCS, constant
-from .model import ColumnRef, Join, QueryInfo, QueryPair
+from .model import ColumnRef, Join, QueryInfo
 from .resolver import ParsedQuery, scope_label
 from .validate import check_with_postgres, volatile_functions
 

@@ -32,7 +32,7 @@ from ..ordering.planner import root_table
 from ..queries.rules import Rule
 from ..schema.model import SchemaModel
 from ..schema.names import QName
-from .classify import BY_CODE, FOREIGN_KEY, NOT_NULL, UNIQUE, classify
+from .classify import BY_CODE, FOREIGN_KEY, UNIQUE, classify
 from .fix_code import fix_foreign_key, fix_not_null, fix_unique
 from .fix_rules import fix_by_rules
 from .llm_repair import llm_fix

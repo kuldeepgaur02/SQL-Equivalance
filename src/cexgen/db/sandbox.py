@@ -133,7 +133,7 @@ class Sandbox:
             with self._admin.cursor() as cur:
                 cur.execute(stmt)
                 cur.execute(sql.SQL("COMMENT ON DATABASE {} IS {}").format(
-                    sql.Identifier(self.name), sql.Literal(f"cexgen sandbox, safe to drop")))
+                    sql.Identifier(self.name), sql.Literal("cexgen sandbox, safe to drop")))
         except psycopg2.errors.InsufficientPrivilege:
             raise SandboxError("the Postgres user in CEX_DSN may not create databases (needs CREATEDB)") from None
         except psycopg2.Error as e:

@@ -167,11 +167,6 @@ def split_statements(sql: str) -> list[Statement]:
     return out
 
 
-def without_comments(sql: str) -> str:
-    """The text with every comment replaced by a single space."""
-    return "".join(" " if t.kind == COMMENT else t.text for t in tokenize(sql))
-
-
 def fingerprint(sql: str) -> str:
     """Comments dropped, code whitespace collapsed, code lower-cased; strings and
     quoted identifiers kept exactly. Two queries with equal fingerprints are the
