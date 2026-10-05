@@ -1,14 +1,21 @@
 """A script that recreates the handed-off database, and the proof that it does.
 
-    schema SQL (as given)                          creates the tables (and any seed rows)
-    TRUNCATE every table                           so only the handed-off rows remain
-    SET session_replication_role = replica         FKs and triggers off while the rows go back in
-    INSERT ...                                     every row the database held (seed, base, trigger-added)
-    RESET session_replication_role
+It needs only the rights of the tables' owner (no superuser), so it runs on any
+PostgreSQL where the schema was created:
 
-Values are rendered by psycopg2, the same way the INSERTs of Step 6 sent them.
+    BEGIN
+    TRUNCATE every table                             only the handed-off rows remain
+    DISABLE TRIGGER USER on tables with triggers     rows triggers added are already in the data
+    FKs of a cycle -> DEFERRABLE                     only for the script; set back below
+    SET CONSTRAINTS ALL DEFERRED
+    INSERT ..., parents first (FK graph);            one statement per table, so rows of a table
+                                                     may refer to each other
+    SET CONSTRAINTS ALL IMMEDIATE                    every FK is checked here
+    the cycle FKs back to NOT DEFERRABLE, triggers enabled again
+    COMMIT
+
 verify() runs the script in a fresh sandbox database and compares Q1 and Q2
-again: the hand-off is only trusted if it gives the same outcome.
+again: the hand-off is only trusted if both results come out exactly the same.
 """
 from __future__ import annotations
 
@@ -25,39 +32,50 @@ from ..config import Settings
 from ..db.sandbox import Sandbox
 from ..errors import CexError
 from ..insertion.sql import to_db
+from ..ordering.graph import Edge, FkGraph
+from ..ordering.planner import root_table
 from ..schema.model import SchemaModel
 from ..schema.names import QName
 
 
 def data_sql(conn, model: SchemaModel, snapshot: dict[QName, tuple[dict, ...]],
-             order: list[QName] | None = None) -> str:
-    """`order`: tables to write first (the insert plan's parents-first order), for a readable script."""
-    first = [t for t in (order or []) if t in snapshot]
-    snapshot = {**{t: snapshot[t] for t in first}, **{t: r for t, r in snapshot.items() if t not in first}}
+             header: list[str] | None = None) -> str:
+    holding = [t for t in snapshot if t in model.tables]
+    edges = [Edge(t, root_table(model, fk.ref_table), fk) for t in holding for fk in model.tables[t].foreign_keys
+             if root_table(model, fk.ref_table) in holding and root_table(model, fk.ref_table) != t]
+    order = [t for comp in FkGraph(holding, edges).ordered_components() for t in comp]
+    cyclic = {t for comp in FkGraph(holding, edges).components() if len(comp) > 1 for t in comp}
+    to_defer = [e.fk for e in edges if e.child in cyclic and e.parent in cyclic and not e.fk.deferrable]
+    triggered = [t for t in holding if any(trg.enabled for trg in model.tables[t].triggers)]
+
+    def ident(q: QName) -> str:
+        return sql.Identifier(q.schema, q.name).as_string(conn)
+
+    lines = [f"-- {h}" for h in (header or [])] + ["BEGIN;"]
     tables = [t for t in model.tables.values() if t.kind in ("table", "partitioned table")]
-    lines = ["BEGIN;"]
     if tables:
-        lines.append(sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE;").format(
-            sql.SQL(", ").join(sql.Identifier(t.qname.schema, t.qname.name) for t in tables)).as_string(conn))
-    lines.append("SET LOCAL session_replication_role = replica;")
+        lines.append(f"TRUNCATE {', '.join(ident(t.qname) for t in tables)} RESTART IDENTITY CASCADE;")
+    lines += [f"ALTER TABLE {ident(t)} DISABLE TRIGGER USER;" for t in triggered]
+    lines += [f"ALTER TABLE {ident(fk.table)} ALTER CONSTRAINT {sql.Identifier(fk.name).as_string(conn)} "
+              f"DEFERRABLE INITIALLY DEFERRED;" for fk in to_defer]
+    lines.append("SET CONSTRAINTS ALL DEFERRED;")
     with conn.cursor() as cur:
-        for qname, rows in snapshot.items():
-            table = model.tables.get(qname)
-            if table is None:
-                continue
+        for qname in order:
+            rows, table = snapshot[qname], model.tables[qname]
             cols = [c for c in table.insertable_columns if rows and c.name in rows[0]]
             if not cols:
-                lines += [sql.SQL("INSERT INTO {} DEFAULT VALUES;").format(
-                    sql.Identifier(qname.schema, qname.name)).as_string(conn)] * len(rows)
+                lines += [f"INSERT INTO {ident(qname)} DEFAULT VALUES;"] * len(rows)
                 continue
             overriding = "OVERRIDING SYSTEM VALUE " if any(c.identity == "always" for c in cols) else ""
-            head = sql.SQL("INSERT INTO {} ({}) " + overriding + "VALUES ").format(
-                sql.Identifier(qname.schema, qname.name),
-                sql.SQL(", ").join(sql.Identifier(c.name) for c in cols)).as_string(conn)
-            for row in rows:
-                values = cur.mogrify("(" + ", ".join(["%s"] * len(cols)) + ")",
-                                     [to_db(row[c.name], c) for c in cols]).decode()
-                lines.append(head + values + ";")
+            values = ",\n    ".join(
+                cur.mogrify("(" + ", ".join(["%s"] * len(cols)) + ")", [to_db(r[c.name], c) for c in cols]).decode()
+                for r in rows)
+            lines.append(f"INSERT INTO {ident(qname)} ({', '.join(sql.Identifier(c.name).as_string(conn) for c in cols)}) "
+                         f"{overriding}VALUES\n    {values};")
+    lines.append("SET CONSTRAINTS ALL IMMEDIATE;")
+    lines += [f"ALTER TABLE {ident(fk.table)} ALTER CONSTRAINT {sql.Identifier(fk.name).as_string(conn)} "
+              f"NOT DEFERRABLE;" for fk in to_defer]
+    lines += [f"ALTER TABLE {ident(t)} ENABLE TRIGGER USER;" for t in triggered]
     lines.append("COMMIT;")
     return "\n".join(lines) + "\n"
 

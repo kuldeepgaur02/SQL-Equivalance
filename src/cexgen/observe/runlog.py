@@ -56,7 +56,8 @@ class RunLog(logging.Handler):
             f"python:    {platform.python_version()} on {platform.platform()}",
             f"database:  {safe_dsn(settings.dsn)}",
             f"llm:       {'on (' + settings.llm_provider + ' / ' + settings.llm_model + ')' if settings.llm_enabled else 'off (--no-llm: rule table)'}",
-            f"runs dir:  {settings.runs_dir}   schema memory: {'on' if settings.use_schema_memory else 'off'}",
+            f"runs dir:  {settings.runs_dir}   schema memory: {'on' if settings.use_schema_memory else 'off'}"
+            f"   collation: {settings.db_locale}   time zone: {settings.session.get('TimeZone')}",
             f"limits:    max repairs 3, max rebuilds {settings.max_rebuilds}, max result rows {settings.max_result_rows}",
             "=" * 100,
         ]

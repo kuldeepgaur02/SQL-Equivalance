@@ -25,6 +25,7 @@ class Settings:
 
     # Fixed so query results do not depend on the machine running them.
     # C collation makes text ordering and comparison byte-wise and identical everywhere.
+    # Set CEX_DB_LOCALE (e.g. en_US.UTF-8) to match the collation of the database you care about.
     db_encoding: str = "UTF8"
     db_locale: str = "C"
     session: dict[str, str] = field(default_factory=lambda: {
@@ -93,6 +94,7 @@ class Settings:
             session=session,
             max_input_bytes=_int_env("CEX_MAX_INPUT_BYTES", base.max_input_bytes),
             runs_dir=os.environ.get("CEX_RUNS_DIR", base.runs_dir),
+            db_locale=os.environ.get("CEX_DB_LOCALE", base.db_locale),
             llm_provider=os.environ.get("CEX_LLM_PROVIDER", base.llm_provider),
             llm_model=os.environ.get("CEX_LLM_MODEL", base.llm_model),
             llm_effort=os.environ.get("CEX_LLM_EFFORT", base.llm_effort),
